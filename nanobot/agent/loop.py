@@ -16,6 +16,7 @@ from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFile
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.tools.file_send import SendFileTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.subagent import SubagentManager
@@ -98,6 +99,13 @@ class AgentLoop:
         # Message tool
         message_tool = MessageTool(send_callback=self.bus.publish_outbound)
         self.tools.register(message_tool)
+        
+        # Send file tool
+        send_file_tool = SendFileTool(
+            send_callback=self.bus.publish_outbound,
+            allowed_dir=allowed_dir
+        )
+        self.tools.register(send_file_tool)
         
         # Spawn tool (for subagents)
         spawn_tool = SpawnTool(manager=self.subagents)

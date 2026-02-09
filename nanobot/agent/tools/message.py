@@ -45,6 +45,11 @@ class MessageTool(Tool):
                     "type": "string",
                     "description": "The message content to send"
                 },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional: file paths to attach to the message"
+                },
                 "channel": {
                     "type": "string",
                     "description": "Optional: target channel (telegram, discord, etc.)"
@@ -59,7 +64,8 @@ class MessageTool(Tool):
     
     async def execute(
         self, 
-        content: str, 
+        content: str,
+        files: list[str] | None = None,
         channel: str | None = None, 
         chat_id: str | None = None,
         **kwargs: Any
@@ -76,11 +82,13 @@ class MessageTool(Tool):
         msg = OutboundMessage(
             channel=channel,
             chat_id=chat_id,
-            content=content
+            content=content,
+            files=files or []
         )
         
         try:
             await self._send_callback(msg)
-            return f"Message sent to {channel}:{chat_id}"
+            files_info = f" with {len(files)} file(s)" if files else ""
+            return f"Message sent to {channel}:{chat_id}{files_info}"
         except Exception as e:
             return f"Error sending message: {str(e)}"

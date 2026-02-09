@@ -194,13 +194,19 @@ class TelegramChannel(BaseChannel):
         try:
             # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
-            # Convert markdown to Telegram HTML
-            html_content = _markdown_to_telegram_html(msg.content)
-            await self._app.bot.send_message(
-                chat_id=chat_id,
-                text=html_content,
-                parse_mode="HTML"
-            )
+            
+            # Send files if provided
+            if msg.files:
+                await self._send_files(chat_id, msg.files, msg.content)
+            # Send text message if no files or if content is provided
+            elif msg.content:
+                # Convert markdown to Telegram HTML
+                html_content = _markdown_to_telegram_html(msg.content)
+                await self._app.bot.send_message(
+                    chat_id=chat_id,
+                    text=html_content,
+                    parse_mode="HTML"
+                )
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
         except Exception as e:
@@ -213,6 +219,90 @@ class TelegramChannel(BaseChannel):
                 )
             except Exception as e2:
                 logger.error(f"Error sending Telegram message: {e2}")
+    
+    async def _send_files(self, chat_id: int, file_paths: list[str], caption: str = "") -> None:
+        """Send one or more files to a Telegram chat."""
+        from pathlib import Path
+        from telegram import InputMediaDocument, InputMediaPhoto, InputMediaAudio, InputMediaVideo
+        
+        if not self._app:
+            return
+        
+        # Convert caption to Telegram HTML
+        html_caption = _markdown_to_telegram_html(caption) if caption else ""
+        
+        # Determine file types and group them
+        media_groups: dict[str, list[Path]] = {
+            "photo": [],
+            "video": [],
+            "audio": [],
+            "document": []
+        }
+        
+        for file_path_str in file_paths:
+            file_path = Path(file_path_str)
+            
+            if not file_path.exists():
+                logger.warning(f"File not found, skipping: {file_path}")
+                continue
+            
+            # Determine media type from extension
+            ext = file_path.suffix.lower()
+            if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+                media_groups["photo"].append(file_path)
+            elif ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
+                media_groups["video"].append(file_path)
+            elif ext in ['.mp3', '.ogg', '.wav', '.m4a', '.flac']:
+                media_groups["audio"].append(file_path)
+            else:
+                media_groups["document"].append(file_path)
+        
+        # Send photos as media group if multiple
+        if len(media_groups["photo"]) > 1:
+            media = [
+                InputMediaPhoto(media=open(fp, 'rb'), caption=html_caption if i == 0 else "", parse_mode="HTML")
+                for i, fp in enumerate(media_groups["photo"])
+            ]
+            await self._app.bot.send_media_group(chat_id=chat_id, media=media)
+            # Close file handles
+            for item in media:
+                if hasattr(item.media, 'close'):
+                    item.media.close()
+        elif len(media_groups["photo"]) == 1:
+            fp = media_groups["photo"][0]
+            await self._app.bot.send_photo(
+                chat_id=chat_id,
+                photo=open(fp, 'rb'),
+                caption=html_caption,
+                parse_mode="HTML"
+            )
+        
+        # Send videos
+        for fp in media_groups["video"]:
+            await self._app.bot.send_video(
+                chat_id=chat_id,
+                video=open(fp, 'rb'),
+                caption=html_caption if len(file_paths) == 1 else "",
+                parse_mode="HTML"
+            )
+        
+        # Send audio files
+        for fp in media_groups["audio"]:
+            await self._app.bot.send_audio(
+                chat_id=chat_id,
+                audio=open(fp, 'rb'),
+                caption=html_caption if len(file_paths) == 1 else "",
+                parse_mode="HTML"
+            )
+        
+        # Send documents
+        for fp in media_groups["document"]:
+            await self._app.bot.send_document(
+                chat_id=chat_id,
+                document=open(fp, 'rb'),
+                caption=html_caption if len(file_paths) == 1 else "",
+                parse_mode="HTML"
+            )
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""

@@ -79,14 +79,58 @@ class WhatsAppChannel(BaseChannel):
             return
         
         try:
-            payload = {
-                "type": "send",
-                "to": msg.chat_id,
-                "text": msg.content
-            }
-            await self._ws.send(json.dumps(payload))
+            # Send files if provided
+            if msg.files:
+                await self._send_files(msg.chat_id, msg.files, msg.content)
+            # Send text message if no files or if only content is provided
+            elif msg.content:
+                payload = {
+                    "type": "send",
+                    "to": msg.chat_id,
+                    "text": msg.content
+                }
+                await self._ws.send(json.dumps(payload))
         except Exception as e:
             logger.error(f"Error sending WhatsApp message: {e}")
+    
+    async def _send_files(self, chat_id: str, file_paths: list[str], caption: str = "") -> None:
+        """Send one or more files to a WhatsApp chat."""
+        from pathlib import Path
+        import base64
+        
+        if not self._ws or not self._connected:
+            logger.warning("WhatsApp bridge not connected, cannot send files")
+            return
+        
+        for file_path_str in file_paths:
+            file_path = Path(file_path_str)
+            
+            if not file_path.exists():
+                logger.warning(f"File not found, skipping: {file_path}")
+                continue
+            
+            try:
+                # Read file and encode to base64
+                with open(file_path, 'rb') as f:
+                    file_data = base64.b64encode(f.read()).decode('utf-8')
+                
+                # Determine MIME type from extension
+                import mimetypes
+                mime_type, _ = mimetypes.guess_type(str(file_path))
+                mime_type = mime_type or 'application/octet-stream'
+                
+                payload = {
+                    "type": "send_file",
+                    "to": chat_id,
+                    "filename": file_path.name,
+                    "data": file_data,
+                    "mimetype": mime_type,
+                    "caption": caption
+                }
+                await self._ws.send(json.dumps(payload))
+                logger.debug(f"Sent file {file_path.name} to {chat_id}")
+            except Exception as e:
+                logger.error(f"Error sending file {file_path}: {e}")
     
     async def _handle_bridge_message(self, raw: str) -> None:
         """Handle a message from the bridge."""

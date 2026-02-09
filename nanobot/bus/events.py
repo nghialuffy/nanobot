@@ -32,6 +32,7 @@ class OutboundMessage:
     content: str
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)  # File paths to send as attachments
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

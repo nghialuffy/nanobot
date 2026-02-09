@@ -79,33 +79,115 @@ class DiscordChannel(BaseChannel):
             return
 
         url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
-        payload: dict[str, Any] = {"content": msg.content}
-
-        if msg.reply_to:
-            payload["message_reference"] = {"message_id": msg.reply_to}
-            payload["allowed_mentions"] = {"replied_user": False}
-
         headers = {"Authorization": f"Bot {self.config.token}"}
 
         try:
+            # Send files if provided
+            if msg.files:
+                await self._send_with_files(url, headers, msg)
+            else:
+                # Send text message only
+                payload: dict[str, Any] = {"content": msg.content}
+
+                if msg.reply_to:
+                    payload["message_reference"] = {"message_id": msg.reply_to}
+                    payload["allowed_mentions"] = {"replied_user": False}
+
+                for attempt in range(3):
+                    try:
+                        response = await self._http.post(url, headers=headers, json=payload)
+                        if response.status_code == 429:
+                            data = response.json()
+                            retry_after = float(data.get("retry_after", 1.0))
+                            logger.warning(f"Discord rate limited, retrying in {retry_after}s")
+                            await asyncio.sleep(retry_after)
+                            continue
+                        response.raise_for_status()
+                        return
+                    except Exception as e:
+                        if attempt == 2:
+                            logger.error(f"Error sending Discord message: {e}")
+                        else:
+                            await asyncio.sleep(1)
+        finally:
+            await self._stop_typing(msg.chat_id)
+    
+    async def _send_with_files(self, url: str, headers: dict[str, str], msg: OutboundMessage) -> None:
+        """Send a message with file attachments."""
+        if not self._http or not msg.files:
+            return
+        
+        from pathlib import Path
+        
+        # Prepare multipart form data
+        files_data = []
+        total_size = 0
+        
+        for i, file_path_str in enumerate(msg.files):
+            file_path = Path(file_path_str)
+            
+            if not file_path.exists():
+                logger.warning(f"File not found, skipping: {file_path}")
+                continue
+            
+            file_size = file_path.stat().st_size
+            total_size += file_size
+            
+            if total_size > MAX_ATTACHMENT_BYTES:
+                logger.warning(f"Total file size exceeds {MAX_ATTACHMENT_BYTES} bytes, skipping remaining files")
+                break
+            
+            files_data.append(
+                (f"files[{i}]", (file_path.name, open(file_path, 'rb'), self._get_mime_type(file_path)))
+            )
+        
+        if not files_data:
+            logger.warning("No valid files to send")
+            return
+        
+        # Prepare payload
+        payload_json = {"content": msg.content} if msg.content else {}
+        if msg.reply_to:
+            payload_json["message_reference"] = {"message_id": msg.reply_to}
+            payload_json["allowed_mentions"] = {"replied_user": False}
+        
+        # Send with files
+        try:
             for attempt in range(3):
                 try:
-                    response = await self._http.post(url, headers=headers, json=payload)
+                    response = await self._http.post(
+                        url,
+                        headers=headers,
+                        data={"payload_json": json.dumps(payload_json)},
+                        files=files_data
+                    )
+                    
                     if response.status_code == 429:
                         data = response.json()
                         retry_after = float(data.get("retry_after", 1.0))
                         logger.warning(f"Discord rate limited, retrying in {retry_after}s")
                         await asyncio.sleep(retry_after)
                         continue
+                    
                     response.raise_for_status()
+                    logger.debug(f"Sent {len(files_data)} file(s) to Discord channel {msg.chat_id}")
                     return
                 except Exception as e:
                     if attempt == 2:
-                        logger.error(f"Error sending Discord message: {e}")
+                        logger.error(f"Error sending Discord message with files: {e}")
                     else:
                         await asyncio.sleep(1)
         finally:
-            await self._stop_typing(msg.chat_id)
+            # Close file handles
+            for _, (_, file_obj, _) in files_data:
+                if hasattr(file_obj, 'close'):
+                    file_obj.close()
+    
+    def _get_mime_type(self, file_path: Path) -> str:
+        """Get MIME type for a file."""
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        return mime_type or 'application/octet-stream'
 
     async def _gateway_loop(self) -> None:
         """Main gateway loop: identify, heartbeat, dispatch events."""
