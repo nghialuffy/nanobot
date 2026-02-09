@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from nanobot.agent.tools.base import Tool
 
 
@@ -26,7 +27,7 @@ class ExecTool(Tool):
             r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
             r"\bdel\s+/[fq]\b",              # del /f, del /q
             r"\brmdir\s+/s\b",               # rmdir /s
-            r"\b(format|mkfs|diskpart)\b",   # disk operations
+            r"\b(mkfs|diskpart)\b",   # disk operations
             r"\bdd\s+if=",                   # dd
             r">\s*/dev/sd",                  # write to disk
             r"\b(shutdown|reboot|poweroff)\b",  # system power
@@ -115,6 +116,8 @@ class ExecTool(Tool):
 
         for pattern in self.deny_patterns:
             if re.search(pattern, lower):
+                logger.warning(f"Blocked command due to deny pattern: {pattern}")
+                logger.warning(f"Command: {cmd}")
                 return "Error: Command blocked by safety guard (dangerous pattern detected)"
 
         if self.allow_patterns:
